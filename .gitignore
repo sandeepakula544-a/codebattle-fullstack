@@ -1,0 +1,28 @@
+# ========================================================
+# CodeBattle Project .gitignore
+# ========================================================
+
+# Compiled Java class files & artifacts
+*.class
+*.jar
+*.war
+target/
+*.log
+
+# Node & Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Environment variables
+.env
+.env.*.local
+
+# IDEs & System
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+codebattle-*
