@@ -25,6 +25,17 @@ export const endBattle = async (roomCode) => {
   return data
 }
 
+export const finishBattle = async (roomCode) => {
+  try {
+    const { data } = await api.post(`/rooms/${roomCode}/finish`)
+    return data
+  } catch (err) {
+    // Graceful fallback to endBattle if /finish is not available
+    const { data } = await api.post(`/rooms/${roomCode}/end`)
+    return data
+  }
+}
+
 export const getRoomQuestions = async (roomCode) => {
   const { data } = await api.get(`/rooms/${roomCode}/questions`)
   return data

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getResults } from '../api/stats'
-import { getRoom, endBattle } from '../api/rooms'
+import { getRoom, endBattle, finishBattle } from '../api/rooms'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { subscribeToRoom } from '../ws/roomSocket'
 import { formatTime, parseServerDate } from '../utils/time'
@@ -15,22 +15,39 @@ export default function Results() {
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [finalizing, setFinalizing] = useState(false)
   const [remainingSeconds, setRemainingSeconds] = useState(null)
 
-  const loadResults = async () => {
+  const loadResults = useCallback(async () => {
     try {
       const data = await getResults(roomCode)
       setResults(data)
     } catch (err) {
-      setError(err.message)
+      // If results are not ready yet, keep waiting
+      console.warn('Could not fetch results yet:', err.message)
     } finally {
       setLoading(false)
     }
+  }, [roomCode])
+
+  const handleFinalizeNow = async () => {
+    setFinalizing(true)
+    try {
+      await endBattle(roomCode)
+    } catch (ignored) {}
+    await loadResults()
+    setFinalizing(false)
   }
 
-  // Initial load: check room status first
+  // Initial load: record finished status, save recent room, and check room status
   useEffect(() => {
     let cancelled = false
+
+    if (roomCode) {
+      localStorage.setItem('codebattle_last_room', roomCode)
+      // Ensure this player is recorded as finished on server
+      finishBattle(roomCode).catch(() => {})
+    }
 
     async function checkState() {
       try {
@@ -46,8 +63,19 @@ export default function Results() {
             setLoading(false)
           }
         } else {
-          // Battle still in progress (opponent is still coding)
-          if (!cancelled) setLoading(false)
+          // Check if opponent is already finished
+          const opponent = roomData.players?.find((p) => p.playerName !== username)
+          if (opponent?.finished) {
+            // Both finished! Finalize battle immediately
+            try {
+              await endBattle(roomCode)
+            } catch (ignored) {}
+            if (!cancelled) {
+              await loadResults()
+            }
+          } else {
+            if (!cancelled) setLoading(false)
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -59,19 +87,55 @@ export default function Results() {
 
     checkState()
 
-    // Listen to WebSocket for when the battle ends
+    // Listen to WebSocket events
     const unsubscribe = subscribeToRoom(roomCode, (event) => {
       if (cancelled) return
       if (event.type === 'BATTLE_ENDED') {
         loadResults()
       }
+      if (event.type === 'PLAYER_FINISHED') {
+        setRoom(event.room)
+        const opponent = event.room?.players?.find((p) => p.playerName !== username)
+        if (opponent?.finished) {
+          // Opponent just finished! End battle and load results
+          endBattle(roomCode)
+            .then(() => loadResults())
+            .catch(() => loadResults())
+        }
+      }
     })
+
+    // Polling fallback every 3 seconds while waiting for opponent
+    const pollInterval = setInterval(async () => {
+      if (cancelled) return
+      try {
+        const currentRoom = await getRoom(roomCode)
+        if (cancelled) return
+        setRoom(currentRoom)
+
+        if (currentRoom.status === 'COMPLETED') {
+          clearInterval(pollInterval)
+          loadResults()
+          return
+        }
+
+        const opponent = currentRoom.players?.find((p) => p.playerName !== username)
+        if (opponent?.finished) {
+          clearInterval(pollInterval)
+          try {
+            await endBattle(roomCode)
+          } catch (ignored) {}
+          loadResults()
+        }
+      } catch (ignored) {}
+    }, 3000)
 
     return () => {
       cancelled = true
       unsubscribe()
+      clearInterval(pollInterval)
     }
-  }, [roomCode])
+  }, [roomCode, username, loadResults])
 
   // Countdown timer for remaining match time while waiting for opponent
   useEffect(() => {
@@ -97,7 +161,7 @@ export default function Results() {
     tick()
     const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
-  }, [room, results])
+  }, [room, results, roomCode, loadResults])
 
   if (error) {
     return (
@@ -121,10 +185,11 @@ export default function Results() {
     )
   }
 
-  // State 1: Battle is still IN_PROGRESS (You finished early, waiting for opponent)
+  // State 1: Battle is still IN_PROGRESS (Waiting for opponent or finalizing)
   if (!results && room?.status === 'IN_PROGRESS') {
     const myPlayer = room.players?.find((p) => p.playerName === username)
     const opponent = room.players?.find((p) => p.playerName !== username)
+    const isOpponentFinished = Boolean(opponent?.finished)
 
     return (
       <div className="container">
@@ -136,7 +201,7 @@ export default function Results() {
               animation: 'pulseGlow 2.5s infinite alternate',
             }}
           >
-            ⏳
+            {isOpponentFinished ? '⚡' : '⏳'}
           </div>
 
           <div
@@ -149,34 +214,37 @@ export default function Results() {
               marginBottom: '0.35rem',
             }}
           >
-            SUBMISSION RECORDED
+            {isOpponentFinished ? 'BOTH CODERS SUBMITTED' : 'SUBMISSION RECORDED'}
           </div>
 
           <h2 style={{ marginBottom: '0.5rem', textAlign: 'center', fontSize: '1.9rem' }}>
-            Waiting for Opponent...
+            {isOpponentFinished ? 'Finalizing Match Results...' : 'Waiting for Opponent...'}
           </h2>
 
           <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '1.65rem', fontSize: '0.95rem' }}>
-            You have completed and submitted your test! Please wait while your opponent finishes their battle.
-            The final winner and scorecards will automatically appear as soon as they submit or time expires.
+            {isOpponentFinished
+              ? 'Both competitors have submitted their tests! Calculating scores, test benchmarks, and winner now...'
+              : 'You have completed and submitted your test! Please wait while your opponent finishes their battle. The final winner and scorecard will appear automatically.'}
           </p>
 
           {/* Match Timer countdown */}
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.75rem' }}>
-            <div
-              className="hud-timer"
-              style={{
-                color: remainingSeconds !== null && remainingSeconds <= 60 ? 'var(--danger)' : 'var(--neon-cyan)',
-                border: '1px solid var(--border-medium)',
-                background: 'rgba(7, 9, 19, 0.8)',
-                padding: '0.45rem 1.25rem',
-                fontSize: '1.15rem',
-              }}
-            >
-              <span>⏱️ Match Time Remaining:</span>
-              <strong>{formatTime(remainingSeconds ?? room.duration * 60)}</strong>
+          {!isOpponentFinished && (
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.75rem' }}>
+              <div
+                className="hud-timer"
+                style={{
+                  color: remainingSeconds !== null && remainingSeconds <= 60 ? 'var(--danger)' : 'var(--neon-cyan)',
+                  border: '1px solid var(--border-medium)',
+                  background: 'rgba(7, 9, 19, 0.8)',
+                  padding: '0.45rem 1.25rem',
+                  fontSize: '1.15rem',
+                }}
+              >
+                <span>⏱️ Match Time Remaining:</span>
+                <strong>{formatTime(remainingSeconds ?? room.duration * 60)}</strong>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Versus Player Status Cards */}
           <div className="player-list" style={{ textAlign: 'left', marginBottom: '1.75rem' }}>
@@ -222,13 +290,25 @@ export default function Results() {
             <div
               className="player-slot"
               style={{
-                border: '1px solid var(--border-medium)',
-                background: 'rgba(10, 14, 32, 0.8)',
+                border: isOpponentFinished
+                  ? '1px solid var(--neon-emerald)'
+                  : '1px solid var(--border-medium)',
+                background: isOpponentFinished
+                  ? 'rgba(16, 185, 129, 0.08)'
+                  : 'rgba(10, 14, 32, 0.8)',
                 padding: '1.1rem 1.25rem',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                <span className="status-dot" style={{ background: 'var(--warning)', boxShadow: '0 0 10px rgba(245, 158, 11, 0.8)' }} />
+                <span
+                  className="status-dot"
+                  style={{
+                    background: isOpponentFinished ? 'var(--neon-emerald)' : 'var(--warning)',
+                    boxShadow: isOpponentFinished
+                      ? '0 0 10px rgba(16, 185, 129, 0.8)'
+                      : '0 0 10px rgba(245, 158, 11, 0.8)',
+                  }}
+                />
                 <strong style={{ fontSize: '1.05rem', color: 'var(--text-white)' }}>
                   {opponent ? opponent.playerName : 'Opponent'}
                 </strong>
@@ -237,24 +317,44 @@ export default function Results() {
                 style={{
                   fontSize: '0.82rem',
                   fontWeight: 700,
-                  color: 'var(--warning)',
-                  background: 'rgba(245, 158, 11, 0.15)',
+                  color: isOpponentFinished ? 'var(--neon-emerald)' : 'var(--warning)',
+                  background: isOpponentFinished
+                    ? 'rgba(16, 185, 129, 0.15)'
+                    : 'rgba(245, 158, 11, 0.15)',
                   padding: '0.25rem 0.65rem',
                   borderRadius: '999px',
                 }}
               >
-                ⚔️ Coding in Arena...
+                {isOpponentFinished
+                  ? `✓ Finished · ${opponent?.score ?? 0} pts`
+                  : '⚔️ Coding in Arena...'}
               </span>
             </div>
           </div>
 
-          <button
-            className="btn btn-secondary"
-            style={{ width: '100%', padding: '0.8rem' }}
-            onClick={() => navigate('/')}
-          >
-            Leave to Arena Home
-          </button>
+          {/* Action buttons */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', padding: '0.85rem' }}
+              onClick={handleFinalizeNow}
+              disabled={finalizing}
+            >
+              {finalizing
+                ? 'Finalizing Scorecard...'
+                : isOpponentFinished
+                ? 'View Final Results Now 🏁'
+                : '🏁 Opponent Left? Finalize & View Results'}
+            </button>
+
+            <button
+              className="btn btn-secondary"
+              style={{ width: '100%', padding: '0.8rem' }}
+              onClick={() => navigate('/')}
+            >
+              Leave to Arena Home
+            </button>
+          </div>
         </div>
       </div>
     )

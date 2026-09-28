@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { getProfile } from '../api/stats'
 
 export default function Profile() {
+  const navigate = useNavigate()
   const [profile, setProfile] = useState(null)
   const [error, setError] = useState(null)
 
@@ -135,7 +137,7 @@ export default function Profile() {
             <p style={{ color: 'var(--text-muted)' }}>No battles recorded yet. Jump into an arena match!</p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             {profile.history.map((h, i) => (
               <div
                 key={i}
@@ -147,10 +149,11 @@ export default function Profile() {
                     ? '1px solid var(--border-subtle)'
                     : '1px solid rgba(244, 63, 94, 0.3)',
                   background: h.won ? 'rgba(16, 185, 129, 0.05)' : 'var(--card-gradient)',
+                  padding: '1rem 1.25rem',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-                  <code style={{ fontSize: '0.85rem', color: 'var(--neon-cyan)' }}>{h.roomCode}</code>
+                  <code style={{ fontSize: '0.88rem', color: 'var(--neon-cyan)' }}>{h.roomCode}</code>
                   <span style={{ fontWeight: 600 }}>{h.topic?.replace('_', ' ')}</span>
                 </div>
 
@@ -181,6 +184,13 @@ export default function Profile() {
                   <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                     {h.questionsSolved}/{h.numberOfQuestions} solved
                   </span>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem', borderRadius: '8px' }}
+                    onClick={() => navigate(`/results/${h.roomCode}`)}
+                  >
+                    View Scorecard 📊
+                  </button>
                 </div>
               </div>
             ))}

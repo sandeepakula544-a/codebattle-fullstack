@@ -57,6 +57,15 @@ public class RoomController {
         return ResponseEntity.ok(response);
     }
 
+    /** Marks a player as finished with their test. If both finish, ends the battle automatically. */
+    @PostMapping("/{roomCode}/finish")
+    public ResponseEntity<RoomResponse> finishBattle(@PathVariable String roomCode,
+                                                      Authentication authentication) {
+        User user = currentUser(authentication);
+        RoomResponse response = roomService.finishBattle(roomCode.toUpperCase(), user);
+        return ResponseEntity.ok(response);
+    }
+
     /** Ends the battle and finalizes results. Either player can call this (e.g. when their timer hits zero). */
     @PostMapping("/{roomCode}/end")
     public ResponseEntity<RoomResponse> endBattle(@PathVariable String roomCode,

@@ -39,6 +39,9 @@ public class RoomPlayer {
     @Column(nullable = false)
     private Integer score = 0;
 
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private Boolean finished = false;
+
     public enum Role {
         PLAYER_ONE, PLAYER_TWO
     }

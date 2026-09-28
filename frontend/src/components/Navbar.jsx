@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
+import { finishBattle } from '../api/rooms'
 import ExitConfirmModal from './ExitConfirmModal.jsx'
 
 export default function Navbar() {
@@ -24,9 +25,13 @@ export default function Navbar() {
     navigate('/')
   }
 
-  const handleConfirmExit = () => {
+  const handleConfirmExit = async () => {
     setShowExitModal(false)
     if (currentRoomCode) {
+      localStorage.setItem('codebattle_last_room', currentRoomCode)
+      try {
+        await finishBattle(currentRoomCode)
+      } catch (ignored) {}
       navigate(`/results/${currentRoomCode}`)
     } else {
       navigate('/')
@@ -88,6 +93,26 @@ export default function Navbar() {
               >
                 👤 Profile
               </Link>
+              {!isContestPage && localStorage.getItem('codebattle_last_room') && (
+                <Link
+                  to={`/results/${localStorage.getItem('codebattle_last_room')}`}
+                  className="nav-link"
+                  style={{
+                    color: '#6ee7b7',
+                    fontWeight: 700,
+                    background: 'rgba(16, 185, 129, 0.12)',
+                    border: '1px solid rgba(16, 185, 129, 0.35)',
+                    padding: '0.28rem 0.75rem',
+                    borderRadius: '8px',
+                    fontSize: '0.82rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                  }}
+                >
+                  <span>📊</span> Scorecard
+                </Link>
+              )}
             </>
           )}
 

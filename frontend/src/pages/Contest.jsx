@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import Editor from '@monaco-editor/react'
-import { getRoom, getRoomQuestions, endBattle } from '../api/rooms'
+import { getRoom, getRoomQuestions, endBattle, finishBattle } from '../api/rooms'
 import { runCode, submitCode } from '../api/execution'
 import { subscribeToRoom } from '../ws/roomSocket'
 import { formatTime, parseServerDate } from '../utils/time'
@@ -26,6 +26,7 @@ export default function Contest() {
   const [solvedQuestionIds, setSolvedQuestionIds] = useState(new Set())
   const [ending, setEnding] = useState(false)
   const [showExitModal, setShowExitModal] = useState(false)
+  const [opponentFinished, setOpponentFinished] = useState(false)
 
   // Protect against accidental window / tab close or browser navigation
   useEffect(() => {
@@ -79,6 +80,10 @@ export default function Contest() {
       if (event.type === 'BATTLE_ENDED') {
         navigate(`/results/${roomCode}`, { replace: true })
       }
+      if (event.type === 'PLAYER_FINISHED') {
+        setRoom(event.room)
+        setOpponentFinished(true)
+      }
     })
 
     return () => {
@@ -112,6 +117,7 @@ export default function Contest() {
 
   const handleAutoEnd = async () => {
     setEnding(true)
+    localStorage.setItem('codebattle_last_room', roomCode)
     try {
       await endBattle(roomCode)
     } catch (ignored) {
@@ -177,7 +183,10 @@ export default function Contest() {
   const handleConfirmExit = async () => {
     setShowExitModal(false)
     setEnding(true)
-    // Navigate to results screen where the player waits for opponent to complete
+    localStorage.setItem('codebattle_last_room', roomCode)
+    try {
+      await finishBattle(roomCode)
+    } catch (ignored) {}
     navigate(`/results/${roomCode}`)
   }
 
@@ -250,25 +259,49 @@ export default function Contest() {
           })}
         </div>
 
-        {/* HUD Match Timer */}
-        <div
-          className={`hud-timer ${isUrgent ? 'urgent' : ''}`}
-          style={{
-            color: isUrgent ? 'var(--danger)' : 'var(--neon-cyan)',
-          }}
-        >
-          <span style={{ fontSize: '1.1rem' }}>⏱️</span>
-          <span>{timeUp ? "TIME'S UP" : formatTime(remainingSeconds ?? room.duration * 60)}</span>
+        {/* HUD Match Timer & Opponent Status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          {opponentFinished && (
+            <span
+              style={{
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                color: 'var(--neon-emerald)',
+                background: 'rgba(16, 185, 129, 0.15)',
+                padding: '0.3rem 0.75rem',
+                borderRadius: '999px',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+              }}
+            >
+              ⚡ Opponent has submitted!
+            </span>
+          )}
+
+          <div
+            className={`hud-timer ${isUrgent ? 'urgent' : ''}`}
+            style={{
+              color: isUrgent ? 'var(--danger)' : 'var(--neon-cyan)',
+            }}
+          >
+            <span style={{ fontSize: '1.1rem' }}>⏱️</span>
+            <span>{timeUp ? "TIME'S UP" : formatTime(remainingSeconds ?? room.duration * 60)}</span>
+          </div>
         </div>
 
-        {/* Exit & Submit Button */}
+        {/* Exit & Submit / Finish Battle Button */}
         <button
-          className="btn btn-danger"
-          style={{ padding: '0.45rem 1.1rem', fontSize: '0.85rem' }}
+          className={solvedQuestionIds.size === questions.length && questions.length > 0 ? "btn btn-primary" : "btn btn-danger"}
+          style={{
+            padding: '0.45rem 1.15rem',
+            fontSize: '0.85rem',
+            background: solvedQuestionIds.size === questions.length && questions.length > 0 ? 'var(--neon-emerald)' : undefined,
+            color: solvedQuestionIds.size === questions.length && questions.length > 0 ? '#070913' : undefined,
+            fontWeight: 700,
+          }}
           onClick={() => setShowExitModal(true)}
           disabled={ending}
         >
-          {ending ? 'Exiting...' : 'Exit & Submit'}
+          {ending ? 'Submitting...' : solvedQuestionIds.size === questions.length && questions.length > 0 ? '🏁 Finish Battle' : 'Exit & Submit'}
         </button>
       </div>
 

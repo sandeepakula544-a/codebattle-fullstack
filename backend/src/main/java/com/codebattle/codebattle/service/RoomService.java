@@ -132,6 +132,51 @@ public class RoomService {
     }
 
     /**
+     * Marks a player as finished with their test.
+     * If all players are now finished, the entire battle is completed immediately.
+     * Otherwise, a PLAYER_FINISHED event is broadcast to the room.
+     */
+    @Transactional
+    public RoomResponse finishBattle(String roomCode, User requester) {
+        Room room = findRoomOrThrow(roomCode);
+
+        boolean isPlayerInRoom = room.getPlayers().stream()
+                .anyMatch(p -> p.getUser().getId().equals(requester.getId()));
+        if (!isPlayerInRoom) {
+            throw new IllegalStateException("You are not a player in this room");
+        }
+
+        if (room.getStatus() == Room.RoomStatus.COMPLETED) {
+            return RoomResponse.from(room);
+        }
+
+        RoomPlayer player = room.getPlayers().stream()
+                .filter(p -> p.getUser().getId().equals(requester.getId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Player is not in this room"));
+
+        player.setFinished(true);
+        roomPlayerRepository.save(player);
+
+        boolean allFinished = room.getPlayers().stream()
+                .allMatch(p -> Boolean.TRUE.equals(p.getFinished()));
+
+        if (allFinished || room.getPlayers().size() < 2) {
+            return endBattle(roomCode, requester);
+        }
+
+        Room saved = roomRepository.save(room);
+        RoomResponse response = RoomResponse.from(saved);
+
+        messagingTemplate.convertAndSend(
+                "/topic/room/" + roomCode,
+                new RoomEvent("PLAYER_FINISHED", response)
+        );
+
+        return response;
+    }
+
+    /**
      * Ends the battle: idempotent (calling it again after it's already
      * COMPLETED just returns the current state, doesn't recompute) so it's
      * safe for either player to trigger this, or for it to fire twice if
@@ -167,15 +212,17 @@ public class RoomService {
         boolean isDraw = room.getPlayers().size() == 2
                 && room.getPlayers().get(0).getScore().equals(room.getPlayers().get(1).getScore());
 
-        for (RoomPlayer rp : room.getPlayers()) {
-            com.codebattle.codebattle.entity.BattleResult result = new com.codebattle.codebattle.entity.BattleResult();
-            result.setRoom(room);
-            result.setPlayer(rp.getUser());
-            result.setScore(rp.getScore());
-            result.setQuestionsSolved(rp.getScore()); // scoring model: 1 point per distinct question solved
-            result.setTotalTimeSeconds(totalTimeSeconds);
-            result.setWon(!isDraw && winner != null && winner.getId().equals(rp.getId()));
-            battleResultRepository.save(result);
+        if (battleResultRepository.findByRoom(room).isEmpty()) {
+            for (RoomPlayer rp : room.getPlayers()) {
+                com.codebattle.codebattle.entity.BattleResult result = new com.codebattle.codebattle.entity.BattleResult();
+                result.setRoom(room);
+                result.setPlayer(rp.getUser());
+                result.setScore(rp.getScore());
+                result.setQuestionsSolved(rp.getScore()); // scoring model: 1 point per distinct question solved
+                result.setTotalTimeSeconds(totalTimeSeconds);
+                result.setWon(!isDraw && winner != null && winner.getId().equals(rp.getId()));
+                battleResultRepository.save(result);
+            }
         }
 
         RoomResponse response = RoomResponse.from(saved);
