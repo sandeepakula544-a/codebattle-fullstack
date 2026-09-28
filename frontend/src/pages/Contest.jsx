@@ -4,13 +4,8 @@ import Editor from '@monaco-editor/react'
 import { getRoom, getRoomQuestions, endBattle } from '../api/rooms'
 import { runCode, submitCode } from '../api/execution'
 import { subscribeToRoom } from '../ws/roomSocket'
-
-function formatTime(totalSeconds) {
-  const clamped = Math.max(0, totalSeconds)
-  const mins = Math.floor(clamped / 60)
-  const secs = clamped % 60
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
-}
+import { formatTime, parseServerDate } from '../utils/time'
+import ExitConfirmModal from '../components/ExitConfirmModal.jsx'
 
 export default function Contest() {
   const { roomCode } = useParams()
@@ -30,6 +25,17 @@ export default function Contest() {
   const [submitResult, setSubmitResult] = useState(null)
   const [solvedQuestionIds, setSolvedQuestionIds] = useState(new Set())
   const [ending, setEnding] = useState(false)
+  const [showExitModal, setShowExitModal] = useState(false)
+
+  // Protect against accidental window / tab close or browser navigation
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -49,11 +55,6 @@ export default function Contest() {
         }
 
         setRoom(roomData)
-        console.log("Battle startedAt:", roomData.startedAt)
-        console.log("Battle duration:", roomData.duration)
-        console.log("Current time:", new Date().toISOString())
-
-
 
         const qs = await getRoomQuestions(roomCode)
         if (cancelled) return
@@ -86,20 +87,39 @@ export default function Contest() {
     }
   }, [roomCode, navigate])
 
+  // Countdown timer with robust UTC timezone parsing to prevent premature "TIME'S UP"
   useEffect(() => {
     if (!room?.startedAt) return
 
-    const endTime = new Date(room.startedAt).getTime() + room.duration * 60 * 1000
+    const startTime = parseServerDate(room.startedAt)
+    const durationMs = (room.duration || 30) * 60 * 1000
+    const endTime = startTime + durationMs
 
     const tick = () => {
-      const secondsLeft = Math.round((endTime - Date.now()) / 1000)
+      const now = Date.now()
+      const secondsLeft = Math.max(0, Math.round((endTime - now) / 1000))
       setRemainingSeconds(secondsLeft)
+
+      if (secondsLeft <= 0 && !ending) {
+        handleAutoEnd()
+      }
     }
 
     tick()
     const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
-  }, [room])
+  }, [room, ending])
+
+  const handleAutoEnd = async () => {
+    setEnding(true)
+    try {
+      await endBattle(roomCode)
+    } catch (ignored) {
+      // Ignored: Battle might already be ended by server or opponent
+    } finally {
+      navigate(`/results/${roomCode}`, { replace: true })
+    }
+  }
 
   const activeQuestion = questions[activeIndex]
   const timeUp = remainingSeconds !== null && remainingSeconds <= 0
@@ -154,16 +174,11 @@ export default function Contest() {
     }
   }
 
-  const handleEndBattle = async () => {
-    if (!window.confirm('Are you sure you want to finish and end the battle for everyone?')) return
+  const handleConfirmExit = async () => {
+    setShowExitModal(false)
     setEnding(true)
-    try {
-      await endBattle(roomCode)
-      navigate(`/results/${roomCode}`, { replace: true })
-    } catch (err) {
-      setError(err.message)
-      setEnding(false)
-    }
+    // Navigate to results screen where the player waits for opponent to complete
+    navigate(`/results/${roomCode}`)
   }
 
   if (error) {
@@ -179,7 +194,7 @@ export default function Contest() {
       <div className="container">
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
           <div className="status-dot" style={{ width: 14, height: 14 }} />
-          <p style={{ color: 'var(--text-muted)' }}>Loading battle arena problem set...</p>
+          <p style={{ color: 'var(--text-muted)' }}>Entering battle arena problem set...</p>
         </div>
       </div>
     )
@@ -246,13 +261,14 @@ export default function Contest() {
           <span>{timeUp ? "TIME'S UP" : formatTime(remainingSeconds ?? room.duration * 60)}</span>
         </div>
 
+        {/* Exit & Submit Button */}
         <button
           className="btn btn-danger"
           style={{ padding: '0.45rem 1.1rem', fontSize: '0.85rem' }}
-          onClick={handleEndBattle}
+          onClick={() => setShowExitModal(true)}
           disabled={ending}
         >
-          {ending ? 'Ending...' : 'End Battle'}
+          {ending ? 'Exiting...' : 'Exit & Submit'}
         </button>
       </div>
 
@@ -561,6 +577,13 @@ export default function Contest() {
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal when clicking Exit & Submit */}
+      <ExitConfirmModal
+        isOpen={showExitModal}
+        onConfirm={handleConfirmExit}
+        onCancel={() => setShowExitModal(false)}
+      />
     </div>
   )
 }
