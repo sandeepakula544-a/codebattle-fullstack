@@ -49,6 +49,9 @@ export default function Contest() {
         }
 
         setRoom(roomData)
+        console.log("Battle startedAt:", roomData.startedAt)
+        console.log("Battle duration:", roomData.duration)
+        console.log("Current time:", new Date().toISOString())
 
 
 
