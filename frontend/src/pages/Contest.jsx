@@ -50,6 +50,8 @@ export default function Contest() {
 
         setRoom(roomData)
 
+
+
         const qs = await getRoomQuestions(roomCode)
         if (cancelled) return
         setQuestions(qs)
